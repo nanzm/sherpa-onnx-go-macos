@@ -3998,18 +3998,21 @@ SHERPA_ONNX_API void SherpaOnnxOfflineSpeakerDiarizationDestroySegment(
 /**
  * @brief Progress callback for offline speaker diarization.
  *
- * The current implementation reports progress but ignores the callback's
- * return value.
+ * Return a negative value to cancel processing at the next chunk boundary.
+ * Zero and positive values continue processing.
+ *
+ * The two integer arguments are normalized work units. Use their ratio for
+ * display; do not interpret them as literal audio chunks.
  */
 typedef int32_t (*SherpaOnnxOfflineSpeakerDiarizationProgressCallback)(
-    int32_t num_processed_chunks, int32_t num_total_chunks, void *arg);
+    int32_t num_processed_units, int32_t num_total_units, void *arg);
 
 /**
  * @brief Same as SherpaOnnxOfflineSpeakerDiarizationProgressCallback but
  * without a user pointer.
  */
 typedef int32_t (*SherpaOnnxOfflineSpeakerDiarizationProgressCallbackNoArg)(
-    int32_t num_processed_chunks, int32_t num_total_chunks);
+    int32_t num_processed_units, int32_t num_total_units);
 
 /**
  * @brief Run offline speaker diarization.

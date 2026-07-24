@@ -43,8 +43,10 @@ package sherpa_onnx
 // #include "c-api.h"
 // extern int32_t _cgoGeneratedAudioCallback(float *samples,int32_t n,void *arg);
 // extern int32_t _cgoGeneratedAudioProgressCallback(float *samples, int32_t n, float p, void *arg);
+// extern int32_t _cgoOfflineSpeakerDiarizationProgressCallback(int32_t num_processed_chunks, int32_t num_total_chunks, void *arg);
 import "C"
 import (
+	"context"
 	"encoding/json"
 	"runtime/cgo"
 	"unsafe"
@@ -2171,8 +2173,119 @@ type OfflineSpeakerDiarizationSegment struct {
 	Speaker int
 }
 
+// OfflineSpeakerDiarizationProgressCallback receives processed and total
+// normalized work units while offline speaker diarization is running.
+type OfflineSpeakerDiarizationProgressCallback func(
+	processedUnits int,
+	totalUnits int,
+)
+
+type offlineSpeakerDiarizationCallbackState struct {
+	ctx context.Context
+	cb  OfflineSpeakerDiarizationProgressCallback
+}
+
+//export _cgoOfflineSpeakerDiarizationProgressCallback
+func _cgoOfflineSpeakerDiarizationProgressCallback(
+	processedUnits C.int32_t,
+	totalUnits C.int32_t,
+	arg unsafe.Pointer,
+) C.int32_t {
+	h := *(*cgo.Handle)(arg)
+	state, ok := h.Value().(offlineSpeakerDiarizationCallbackState)
+	if ok {
+		return C.int32_t(invokeOfflineSpeakerDiarizationProgressCallback(
+			state,
+			int(processedUnits),
+			int(totalUnits),
+		))
+	}
+	return 0
+}
+
+func invokeOfflineSpeakerDiarizationProgressCallback(
+	state offlineSpeakerDiarizationCallbackState,
+	processedUnits int,
+	totalUnits int,
+) (keepGoing int32) {
+	if err := state.ctx.Err(); err != nil {
+		return -1
+	}
+	defer func() {
+		_ = recover()
+	}()
+	if state.cb != nil {
+		state.cb(processedUnits, totalUnits)
+	}
+	if err := state.ctx.Err(); err != nil {
+		return -1
+	}
+	return keepGoing
+}
+
 func (sd *OfflineSpeakerDiarization) Process(samples []float32) []OfflineSpeakerDiarizationSegment {
+	if len(samples) == 0 {
+		return nil
+	}
 	r := C.SherpaOnnxOfflineSpeakerDiarizationProcess(sd.impl, (*C.float)(&samples[0]), C.int(len(samples)))
+	return offlineSpeakerDiarizationSegments(r)
+}
+
+// ProcessWithProgressCallback runs offline speaker diarization and reports
+// native progress.
+func (sd *OfflineSpeakerDiarization) ProcessWithProgressCallback(
+	samples []float32,
+	cb OfflineSpeakerDiarizationProgressCallback,
+) []OfflineSpeakerDiarizationSegment {
+	segments, _ := sd.ProcessWithContext(context.Background(), samples, cb)
+	return segments
+}
+
+// ProcessWithContext runs offline speaker diarization, reports native progress,
+// and returns promptly after the native implementation observes cancellation at
+// a processing-chunk boundary.
+func (sd *OfflineSpeakerDiarization) ProcessWithContext(
+	ctx context.Context,
+	samples []float32,
+	cb OfflineSpeakerDiarizationProgressCallback,
+) ([]OfflineSpeakerDiarizationSegment, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(samples) == 0 {
+		return nil, nil
+	}
+
+	h := cgo.NewHandle(offlineSpeakerDiarizationCallbackState{
+		ctx: ctx,
+		cb:  cb,
+	})
+	defer h.Delete()
+	r := C.SherpaOnnxOfflineSpeakerDiarizationProcessWithCallback(
+		sd.impl,
+		(*C.float)(&samples[0]),
+		C.int(len(samples)),
+		C.SherpaOnnxOfflineSpeakerDiarizationProgressCallback(
+			C._cgoOfflineSpeakerDiarizationProgressCallback,
+		),
+		unsafe.Pointer(&h),
+	)
+	if err := ctx.Err(); err != nil {
+		C.SherpaOnnxOfflineSpeakerDiarizationDestroyResult(r)
+		return nil, err
+	}
+	return offlineSpeakerDiarizationSegments(r), nil
+}
+
+func offlineSpeakerDiarizationSegments(
+	r *C.struct_SherpaOnnxOfflineSpeakerDiarizationResult,
+) []OfflineSpeakerDiarizationSegment {
+	if r == nil {
+		return nil
+	}
 	defer C.SherpaOnnxOfflineSpeakerDiarizationDestroyResult(r)
 
 	n := int(C.SherpaOnnxOfflineSpeakerDiarizationResultGetNumSegments(r))
