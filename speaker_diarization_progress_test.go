@@ -1,7 +1,9 @@
 package sherpa_onnx
 
-import "testing"
-import "context"
+import (
+	"context"
+	"testing"
+)
 
 func TestInvokeOfflineSpeakerDiarizationProgressCallback(t *testing.T) {
 	var processed, total int
